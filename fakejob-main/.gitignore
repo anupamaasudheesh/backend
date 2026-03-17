@@ -9,7 +9,7 @@ frontend/
 
 *.h5
 *.pt
-*.pkl
+# *.pkl (removed to allow tokenizer.pkl)
 
 .DS_Store
 Thumbs.db
