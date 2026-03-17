@@ -21,6 +21,10 @@ if os.name == "nt" and os.path.exists(WINDOWS_TESSERACT_PATH):
 app = Flask(__name__)
 CORS(app)
 
+@app.route("/", methods=["GET"])
+def health_check():
+    return jsonify({"status": "API is running", "message": "Fake Job Detection System Ready"}), 200
+
 # ===============================
 # FILE UPLOAD CONFIGURATION
 # ===============================
