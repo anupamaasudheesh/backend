@@ -1,18 +1,30 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import tensorflow as tf
-import pickle
-import numpy as np
-from lime.lime_text import LimeTextExplainer
-from tensorflow.keras.preprocessing.sequence import pad_sequences
 import os
 import re
+import pickle
+import numpy as np
+import tensorflow as tf
 from werkzeug.utils import secure_filename
+
+# Keras 3 unified imports
+try:
+    import keras
+    from keras.models import load_model
+    from keras.preprocessing.sequence import pad_sequences
+    print(f"Using Keras {keras.__version__}")
+except (ImportError, AttributeError):
+    # Fallback to tf.keras if independent keras isn't there
+    from tensorflow.keras.models import load_model
+    from tensorflow.keras.preprocessing.sequence import pad_sequences
+    print("Using tensorflow.keras fallback")
+
 import PyPDF2
 from docx import Document
 from PIL import Image
 import tempfile
 import pytesseract
+from lime.lime_text import LimeTextExplainer
 import logging
 
 # Configure logging to see errors in the console/logs
@@ -46,7 +58,13 @@ TOKENIZER_PATH = os.path.join(BASE_DIR, "model", "tokenizer.pkl")
 # ===============================
 # LOAD MODEL & TOKENIZER
 # ===============================
-model = tf.keras.models.load_model(MODEL_PATH)
+try:
+    model = load_model(MODEL_PATH)
+except Exception as e:
+    print(f"FAILED TO LOAD MODEL: {str(e)}")
+    # Initialize a dummy variable to avoid crash
+    model = None
+
 
 with open(TOKENIZER_PATH, "rb") as f:
     tokenizer = pickle.load(f)
