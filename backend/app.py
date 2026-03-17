@@ -10,10 +10,14 @@ import re
 from werkzeug.utils import secure_filename
 import PyPDF2
 from docx import Document
-import pytesseract
 from PIL import Image
 import tempfile
 import pytesseract
+import logging
+
+# Configure logging to see errors in the console/logs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 WINDOWS_TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 if os.name == "nt" and os.path.exists(WINDOWS_TESSERACT_PATH):
@@ -166,7 +170,7 @@ def rule_based_scam_check(text):
         "urgent hiring",
         "immediate joining",
         "high salary",
-        "contact us today"
+        "contact us today",
         "Good Salary"
     ]
 
@@ -193,57 +197,66 @@ def predict():
     data = request.get_json()
     raw_text = data.get("text", "")
 
-    if not raw_text or raw_text.strip() == "":
-        return jsonify({"error": "No text provided"}), 400
+    try:
+        if not raw_text or raw_text.strip() == "":
+            return jsonify({"error": "No text provided"}), 400
 
-    text = preprocess_text(raw_text)
+        text = preprocess_text(raw_text)
 
-    sequence = tokenizer.texts_to_sequences([text])
-    padded = pad_sequences(
-        sequence,
-        maxlen=MAX_LEN,
-        padding="post",
-        truncating="post"
-    )
+        sequence = tokenizer.texts_to_sequences([text])
+        padded = pad_sequences(
+            sequence,
+            maxlen=MAX_LEN,
+            padding="post",
+            truncating="post"
+        )
 
-    prob_fake = float(model.predict(padded, verbose=0)[0][0])
+        # ML Prediction
+        preds = model.predict(padded, verbose=0)
+        prob_fake = float(preds[0][0])
 
-    # LIME explanation
-    exp = explainer.explain_instance(
-        text,
-        predict_proba,
-        num_features=5
-    )
+        # LIME explanation (can be slow!)
+        try:
+            exp = explainer.explain_instance(
+                text,
+                predict_proba,
+                num_features=5
+            )
+            explanation = [word for word, score in exp.as_list()]
+        except Exception as lime_err:
+            logger.warning(f"LIME explanation failed: {str(lime_err)}")
+            explanation = ["Explanation unavailable"]
 
-    explanation = [word for word, score in exp.as_list()]
+        # ML decision
+        if prob_fake >= 0.5:
+            result = "Fake Job"
+            confidence = prob_fake * 100
+        else:
+            result = "Real Job"
+            confidence = (1 - prob_fake) * 100
 
-    # ML decision
-    if prob_fake >= 0.5:
-        result = "Fake Job"
-        confidence = prob_fake * 100
-    else:
-        result = "Real Job"
-        confidence = (1 - prob_fake) * 100
+        # RULE-BASED CHECK
+        rule_hits = rule_based_scam_check(text)
 
-    # RULE-BASED CHECK
-    rule_hits = rule_based_scam_check(text)
+        if rule_hits >= 3:
+            result = "Fake Job"
+            confidence = 90.0
 
-    if rule_hits >= 3:
-        result = "Fake Job"
-        confidence = 90.0
+        elif rule_hits >= 2 and prob_fake < 0.5:
+            result = "Suspicious / Likely Fake"
+            confidence = 70.0
 
-    elif rule_hits >= 2 and prob_fake < 0.5:
-        result = "Suspicious / Likely Fake"
-        confidence = 70.0
+        incomplete_flag = is_incomplete_job(text)
 
-    incomplete_flag = is_incomplete_job(text)
-
-    return jsonify({
-        "prediction": result,
-        "confidence": round(confidence, 2),
-        "incomplete_description": incomplete_flag,
-        "explanation": explanation
-    })
+        return jsonify({
+            "prediction": result,
+            "confidence": round(confidence, 2),
+            "incomplete_description": incomplete_flag,
+            "explanation": explanation
+        })
+    except Exception as e:
+        logger.error(f"Prediction error: {str(e)}", exc_info=True)
+        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
 # ===============================
 # FILE UPLOAD PREDICTION ROUTE
@@ -340,6 +353,7 @@ def predict_file():
         })
     
     except Exception as e:
+        logger.error(f"File prediction error: {str(e)}", exc_info=True)
         return jsonify({"error": f"Error processing file: {str(e)}"}), 500
 
 # ===============================
